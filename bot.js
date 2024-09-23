@@ -28,10 +28,11 @@ let orderStatus = null;
 let is1minGreenCandle = null;
 let is15minGreenCandle = null;
 let lastPrice = null;
+let isOrderPlaced = false;
 
-let ws, wsTrade, wsPublic; // WebSocket variables
+let ws, wsTrade, wsPublic;
 
-const reconnectDelay = 5000; // 5 seconds delay for reconnection attempts
+const reconnectDelay = 5000;
 
 // Reconnection logic for WebSocket
 const reconnectWebSocket = (wsUrl, wsType) => {
@@ -50,7 +51,7 @@ const reconnectWebSocket = (wsUrl, wsType) => {
     }, reconnectDelay);
 };
 
-// Handlers and websocket connections
+// Function to handle order updates
 const handleOrderUpdate = (orders) => {
     orders.forEach((order) => {
         switch (order?.orderStatus) {
@@ -58,6 +59,7 @@ const handleOrderUpdate = (orders) => {
                 limitOrderId = order?.orderId;
                 limitOrderPrice = order?.price;
                 orderStatus = order?.orderStatus;
+                isOrderPlaced = false;
                 break;
             case 'Untriggered':
                 unTriggerOrderId = order?.orderId;
@@ -73,16 +75,20 @@ const handleOrderUpdate = (orders) => {
     });
 };
 
+// Reset tracking variables after an order is completed or cancelled
 const resetOrderTracking = () => {
     limitOrderId = null;
     unTriggerOrderId = null;
     orderStatus = null;
+    isOrderPlaced = false;
 };
 
+// Handle candle data and check for conditions to place an order
 const handleCandleData = async (candle) => {
     if (candle?.interval === '1') is1minGreenCandle = isGreenCandle(candle);
     if (candle?.interval === '15') is15minGreenCandle = isGreenCandle(candle);
 
+    // Update Stop-Loss when conditions are met
     if (unTriggerOrderId && orderStatus === 'Untriggered' && limitOrderPrice < lastPrice) {
         const stopLossPrice = calculateStopLoss(lastPrice);
         const triggerPrice = (parseFloat(stopLossPrice) + triggerPriceUp).toFixed(coinDecimal);
@@ -97,16 +103,29 @@ const handleCandleData = async (candle) => {
         console.log(`Updated Stop Loss to ${stopLossPrice}`);
     }
 
-    if (is1minGreenCandle && is15minGreenCandle && !orderStatus && !limitOrderId) {
+    // Place a buy limit order if both candle conditions are green and no order is placed
+    if (
+        is1minGreenCandle &&
+        is15minGreenCandle &&
+        !orderStatus &&
+        !limitOrderId &&
+        !isOrderPlaced
+    ) {
+        isOrderPlaced = true;
         await placeBuyLimitOrder();
     }
 };
 
+// Function to place a buy limit order
 const placeBuyLimitOrder = async () => {
     const slPrice = calculateStopLoss(parseFloat(lastPrice));
     const triggerPrice = (parseFloat(slPrice) + triggerPriceUp).toFixed(coinDecimal);
-    const walletBalance = (await getWalletBalance('USDC'))?.[0]?.availableToWithdraw;
+    const walletBalance = (await getWalletBalance('USDC'))?.[0]?.availableToWithdraw - 0.2;
     const qty = (parseFloat(walletBalance) / parseFloat(lastPrice)).toFixed(qtyDecimal);
+
+    console.log({ walletBalance, qty });
+
+    // Place the limit order with Stop-Loss
     placeLimitOrderWithSL({
         ws: wsTrade,
         symbol,
@@ -116,7 +135,10 @@ const placeBuyLimitOrder = async () => {
         triggerPrice,
         slLimitPrice: slPrice
     });
-    console.log(`Placed Buy Limit Order at Price: ${lastPrice}`);
+
+    console.log(
+        `Placed Buy Limit Order at Price: ${lastPrice} initial Stop Loss Price: ${slPrice}`
+    );
 };
 
 // WebSocket Initializers with reconnect logic
