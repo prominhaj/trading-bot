@@ -19,7 +19,7 @@ const wsPublic = new WebSocket(wsPublicURL);
 // Trade Settings
 const tradeCoin = 'SOL';
 const symbol = `${tradeCoin}USDC`;
-export const stopLossPercentage = 0.05;
+export const stopLossPercentage = 0.1;
 export const triggerPriceUp = 0.01;
 export const coinDecimal = 2;
 
@@ -31,6 +31,7 @@ let unTriggerOrderId = null;
 let orderStatus = null;
 let is1minGreenCandle = null;
 let is15minGreenCandle = null;
+let lastPrice = null;
 
 const webSocketOrder = () => {
     // Track order
@@ -89,7 +90,7 @@ const webSocketOrder = () => {
         const response = JSON.parse(data);
 
         // Last Candle Data
-        if (response?.topic?.startsWith('kline') && !orderStatus) {
+        if (response?.topic?.startsWith('kline')) {
             const candle = response.data?.[0];
 
             if (candle?.interval === '1') {
@@ -98,11 +99,6 @@ const webSocketOrder = () => {
             if (candle?.interval === '15') {
                 is15minGreenCandle = isGreenCandle(candle);
             }
-        }
-
-        // Track market price
-        if (response?.topic?.startsWith('tickers')) {
-            const lastPrice = response?.data?.lastPrice;
 
             // Track Limit Order Price And Current Order Price
             if (unTriggerOrderId && orderStatus === 'Untriggered') {
@@ -119,10 +115,11 @@ const webSocketOrder = () => {
                         triggerPrice: triggerPrice
                     });
                     limitOrderPrice = lastPrice;
+                    console.log(`Update Stop Loss Price ${stopLossPrice}`);
                 }
             }
 
-            if (is1minGreenCandle && is15minGreenCandle && !orderStatus) {
+            if (is1minGreenCandle && is15minGreenCandle && !orderStatus && !limitOrderId) {
                 const slPrice = calculateStopLoss(parseFloat(lastPrice));
                 const triggerPrice = (parseFloat(slPrice) + triggerPriceUp).toFixed(coinDecimal);
                 const fetchWalletBalance = await getWalletBalance('USDC');
@@ -144,6 +141,11 @@ const webSocketOrder = () => {
 
                 console.log(`Limit Order Place Price in ${lastPrice}`);
             }
+        }
+
+        // Track market price
+        if (response?.topic?.startsWith('tickers')) {
+            lastPrice = response?.data?.lastPrice;
         }
 
         // Order Book Data
@@ -176,6 +178,7 @@ const webSocketOrder = () => {
         // Check Trade Response
         if (response?.op === 'order.create') {
             if (response.retCode === 0) {
+                limitOrderId = response?.data?.orderId;
                 console.log(`Order Place Id: ${response?.data?.orderId}`);
             } else {
                 console.error(response?.retMsg);
