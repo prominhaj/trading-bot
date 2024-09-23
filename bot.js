@@ -17,11 +17,12 @@ const wsTrade = new WebSocket(wsTradeURL);
 const wsPublic = new WebSocket(wsPublicURL);
 
 // Trade Settings
-const tradeCoin = 'SOL';
+const tradeCoin = 'PEPE';
 const symbol = `${tradeCoin}USDC`;
-export const stopLossPercentage = 0.1;
-export const triggerPriceUp = 0.01;
-export const coinDecimal = 2;
+export const stopLossPercentage = 0.03;
+export const triggerPriceUp = 0.000000005;
+export const coinDecimal = 9;
+const qtyDecimal = 0;
 
 // No Change Variables
 let lastOrderBook = [];
@@ -123,11 +124,11 @@ const webSocketOrder = () => {
                 const slPrice = calculateStopLoss(parseFloat(lastPrice));
                 const triggerPrice = (parseFloat(slPrice) + triggerPriceUp).toFixed(coinDecimal);
                 const fetchWalletBalance = await getWalletBalance('USDC');
-                const walletBalance = Math.floor(
-                    parseFloat(fetchWalletBalance?.[0]?.availableToWithdraw).toFixed(2)
-                );
-                const qty = (parseFloat(walletBalance) / parseFloat(lastPrice)).toFixed(3);
-
+                const walletBalance = (
+                    parseFloat(fetchWalletBalance?.[0]?.availableToWithdraw) - 0.2
+                ).toFixed(2);
+                const qty = (parseFloat(walletBalance) / parseFloat(lastPrice)).toFixed(qtyDecimal);
+                console.log({ walletBalance, qty, triggerPrice, slPrice });
                 // Place Buy Limit Order
                 placeLimitOrderWithSL({
                     ws: wsTrade,
