@@ -12,6 +12,7 @@
     "dependencies": {
         "bybit-api": "^3.10.18",
         "dotenv": "^16.4.5",
+        "orderbooks": "^1.1.9",
         "ws": "^8.18.0"
     }
 }

@@ -2,9 +2,10 @@ import { WebSocket } from 'ws';
 import { authenticate } from './credentials.js';
 import { placeLimitOrderWithSL, updateTPSLOrder } from './oparation/wsOparation.js';
 import { subscribeCandleAndOrderBook, subscribeToOrderAndWallet } from './subscribe/subscribe.js';
-import { isGreenCandle } from './strategy/strategy.js';
-import { calculateStopLoss, trackBidsOrderBook } from './utils.js';
+import { getOrdersBySide, isGreenCandle, performStrategyAnalysis } from './strategy/strategy.js';
+import { calculateProfit, calculateStopLoss, updateOrderBook } from './utils.js';
 import { getWalletBalance } from './oparation/bybit-api.js';
+import { handleOrderbookUpdate, OrderBooks } from './oparation/orderbook.js';
 
 // WebSocket URLs
 const wsURL = 'wss://stream.bybit.com/v5/private';
@@ -22,6 +23,7 @@ const qtyDecimal = 3;
 // Variables to track orders
 let lastOrderBook = [];
 let limitOrderId = null;
+let buyOrderPrice = null;
 let limitOrderPrice = null;
 let unTriggerOrderId = null;
 let orderStatus = null;
@@ -58,6 +60,7 @@ const handleOrderUpdate = (orders) => {
             case 'New':
                 limitOrderId = order?.orderId;
                 limitOrderPrice = order?.price;
+                buyOrderPrice = order?.price;
                 orderStatus = order?.orderStatus;
                 isOrderPlaced = false;
                 break;
@@ -67,7 +70,14 @@ const handleOrderUpdate = (orders) => {
                 break;
             case 'Filled':
                 if (order?.side === 'Sell') {
-                    console.log(`SL Hit at Price: ${order?.price}`);
+                    const profitOrLoss = parseFloat(
+                        calculateProfit(
+                            buyOrderPrice,
+                            parseFloat(order?.price),
+                            parseFloat(order?.qty)
+                        )
+                    );
+                    console.log(`SL Hit ${profitOrLoss >= 0 ? 'Profit' : 'Loss'} $${profitOrLoss}`);
                     resetOrderTracking();
                 }
                 break;
@@ -122,8 +132,6 @@ const placeBuyLimitOrder = async () => {
     const triggerPrice = (parseFloat(slPrice) + triggerPriceUp).toFixed(coinDecimal);
     const walletBalance = (await getWalletBalance('USDC'))?.[0]?.availableToWithdraw - 0.2;
     const qty = (parseFloat(walletBalance) / parseFloat(lastPrice)).toFixed(qtyDecimal);
-
-    console.log({ walletBalance, qty });
 
     // Place the limit order with Stop-Loss
     placeLimitOrderWithSL({
@@ -195,10 +203,17 @@ const initializePublicWebSocket = (wsPublic) => {
 
     wsPublic.on('message', async (data) => {
         const response = JSON.parse(data);
-        if (response?.topic?.startsWith('kline')) await handleCandleData(response.data?.[0]);
-        if (response?.topic?.startsWith('tickers')) lastPrice = response?.data?.lastPrice;
-        if (response?.topic?.startsWith('orderbook'))
-            trackBidsOrderBook(response?.data, lastOrderBook);
+        // if (response?.topic?.startsWith('kline')) await handleCandleData(response.data?.[0]);
+        if (response?.topic?.startsWith('tickers')) {
+            lastPrice = response?.data?.lastPrice;
+        }
+        if (response?.topic?.startsWith('orderbook')) {
+            // trackBidsOrderBook(response?.data, lastOrderBook);
+            handleOrderbookUpdate(response);
+            // console.log(OrderBooks?.books?.['50']?.book);
+            const orderBooks = updateOrderBook(OrderBooks?.books?.['50']?.book);
+            const orderBookPercentage = performStrategyAnalysis(orderBooks);
+        }
     });
 
     wsPublic.on('error', (error) => console.error('Public WebSocket Error:', error));

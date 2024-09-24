@@ -20,7 +20,7 @@ export const subscribeCandleAndOrderBook = (ws, symbol) => {
                 `kline.1.${symbol}`,
                 `kline.15.${symbol}`,
                 `tickers.${symbol}`,
-                `orderbook.1.${symbol}`
+                `orderbook.50.${symbol}`
             ]
         })
     );
