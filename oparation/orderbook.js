@@ -8,43 +8,45 @@ export const OrderBooks = new OrderBooksStore({
 
 export function handleOrderbookUpdate(message) {
     const { topic, type, data, cts } = message;
-    const [topicKey, symbol] = topic.split('.');
+    const [_, symbol] = topic.split('.');
 
-    const bidsArray = data.b.map(([price, amount]) => {
-        return OrderBookLevel(symbol, +price, 'Buy', +amount);
-    });
+    const upsertLevels = [];
+    const deleteLevels = [];
 
-    const asksArray = data.a.map(([price, amount]) => {
-        return OrderBookLevel(symbol, +price, 'Sell', +amount);
-    });
+    // Combine bid and ask levels into a single pass
+    const { b: bids, a: asks } = data;
 
-    const allBidsAndAsks = [...bidsArray, ...asksArray];
+    for (let i = 0; i < bids.length; i++) {
+        const [price, amount] = bids[i];
+        const level = OrderBookLevel(symbol, +price, 'Buy', +amount);
+        if (amount === 0) {
+            deleteLevels.push(level);
+        } else {
+            upsertLevels.push(level);
+        }
+    }
+
+    for (let i = 0; i < asks.length; i++) {
+        const [price, amount] = asks[i];
+        const level = OrderBookLevel(symbol, +price, 'Sell', +amount);
+        if (amount === 0) {
+            deleteLevels.push(level);
+        } else {
+            upsertLevels.push(level);
+        }
+    }
 
     if (type === 'snapshot') {
         // Store initial snapshot
-        const storedOrderbook = OrderBooks.handleSnapshot(symbol, allBidsAndAsks, cts);
+        OrderBooks.handleSnapshot(symbol, [...upsertLevels, ...deleteLevels], cts);
         return;
     }
 
     if (type === 'delta') {
-        const upsertLevels = [];
-        const deleteLevels = [];
-
-        // Separate "deletes" from "updates/inserts"
-        allBidsAndAsks.forEach((level) => {
-            const [_, price, side, qty] = level;
-
-            if (qty === 0) {
-                deleteLevels.push(level);
-            } else {
-                upsertLevels.push(level);
-            }
-        });
-
-        // Feed delta into orderbook store
-        const storedOrderbook = OrderBooks.handleDelta(symbol, deleteLevels, upsertLevels, [], cts);
+        // Feed delta into the orderbook store
+        OrderBooks.handleDelta(symbol, deleteLevels, upsertLevels, [], cts);
         return;
     }
 
-    console.error('unhandled orderbook update type: ', type);
+    console.error('Unhandled orderbook update type:', type);
 }

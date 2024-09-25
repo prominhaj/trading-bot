@@ -1,8 +1,8 @@
 import { WebSocket } from 'ws';
 import { authenticate } from './credentials.js';
-import { placeLimitOrderWithSL, updateTPSLOrder } from './oparation/wsOparation.js';
+import { placeOrderWithSL, updateTPSLOrder } from './oparation/wsOparation.js';
 import { subscribeCandleAndOrderBook, subscribeToOrderAndWallet } from './subscribe/subscribe.js';
-import { getOrdersBySide, isGreenCandle, performStrategyAnalysis } from './strategy/strategy.js';
+import { isGreenCandle, performStrategyAnalysis } from './strategy/strategy.js';
 import { calculateProfit, calculateStopLoss, updateOrderBook } from './utils.js';
 import { getWalletBalance } from './oparation/bybit-api.js';
 import { handleOrderbookUpdate, OrderBooks } from './oparation/orderbook.js';
@@ -15,13 +15,13 @@ const wsPublicURL = 'wss://stream.bybit.com/v5/public/spot';
 // Trade Settings
 const tradeCoin = 'SOL';
 const symbol = `${tradeCoin}USDC`;
-export const stopLossPercentage = 0.05;
+const initialStopLoss = 0.05;
+const stopLossPercentage = 0.025;
 export const triggerPriceUp = 0.01;
 export const coinDecimal = 2;
 const qtyDecimal = 3;
 
 // Variables to track orders
-let lastOrderBook = [];
 let limitOrderId = null;
 let buyOrderPrice = null;
 let limitOrderPrice = null;
@@ -34,7 +34,7 @@ let isOrderPlaced = false;
 
 let ws, wsTrade, wsPublic;
 
-const reconnectDelay = 5000;
+const reconnectDelay = 3000;
 
 // Reconnection logic for WebSocket
 const reconnectWebSocket = (wsUrl, wsType) => {
@@ -97,10 +97,16 @@ const resetOrderTracking = () => {
 const handleCandleData = async (candle) => {
     if (candle?.interval === '1') is1minGreenCandle = isGreenCandle(candle);
     if (candle?.interval === '15') is15minGreenCandle = isGreenCandle(candle);
+};
+
+const handleOrderBooksChanging = async () => {
+    const orderBooks = updateOrderBook(OrderBooks?.books?.['50']?.book);
+    const orderBookSignal = performStrategyAnalysis(orderBooks);
+    const lastOrderPrice = orderBookSignal?.highestOrder;
 
     // Update Stop-Loss when conditions are met
-    if (unTriggerOrderId && orderStatus === 'Untriggered' && limitOrderPrice < lastPrice) {
-        const stopLossPrice = calculateStopLoss(lastPrice);
+    if (unTriggerOrderId && orderStatus === 'Untriggered' && limitOrderPrice < lastOrderPrice) {
+        const stopLossPrice = calculateStopLoss(lastOrderPrice, stopLossPercentage, coinDecimal);
         const triggerPrice = (parseFloat(stopLossPrice) + triggerPriceUp).toFixed(coinDecimal);
         updateTPSLOrder({
             ws: wsTrade,
@@ -109,7 +115,7 @@ const handleCandleData = async (candle) => {
             stopLossPrice,
             triggerPrice
         });
-        limitOrderPrice = lastPrice;
+        limitOrderPrice = lastOrderPrice;
         console.log(`Updated Stop Loss to ${stopLossPrice}`);
     }
 
@@ -117,29 +123,35 @@ const handleCandleData = async (candle) => {
     if (
         is1minGreenCandle &&
         is15minGreenCandle &&
+        orderBookSignal?.signal === 'Buy' &&
         !orderStatus &&
         !limitOrderId &&
         !isOrderPlaced
     ) {
         isOrderPlaced = true;
-        await placeBuyLimitOrder();
+        await placeBuyLimitOrder(lastOrderPrice);
     }
 };
 
 // Function to place a buy limit order
-const placeBuyLimitOrder = async () => {
-    const slPrice = calculateStopLoss(parseFloat(lastPrice));
+const placeBuyLimitOrder = async (highestOrder) => {
+    const slPrice = calculateStopLoss(parseFloat(highestOrder), initialStopLoss, coinDecimal);
     const triggerPrice = (parseFloat(slPrice) + triggerPriceUp).toFixed(coinDecimal);
     const walletBalance = (await getWalletBalance('USDC'))?.[0]?.availableToWithdraw - 0.2;
-    const qty = (parseFloat(walletBalance) / parseFloat(lastPrice)).toFixed(qtyDecimal);
+    const qty = (parseFloat(walletBalance) / parseFloat(highestOrder + triggerPriceUp)).toFixed(
+        qtyDecimal
+    );
+
+    console.log((highestOrder + triggerPriceUp).toFixed(2));
 
     // Place the limit order with Stop-Loss
-    placeLimitOrderWithSL({
+    placeOrderWithSL({
         ws: wsTrade,
         symbol,
         qty,
         side: 'Buy',
-        price: lastPrice,
+        orderType: 'Limit',
+        price: (highestOrder + triggerPriceUp).toFixed(2),
         triggerPrice,
         slLimitPrice: slPrice
     });
@@ -203,16 +215,13 @@ const initializePublicWebSocket = (wsPublic) => {
 
     wsPublic.on('message', async (data) => {
         const response = JSON.parse(data);
-        // if (response?.topic?.startsWith('kline')) await handleCandleData(response.data?.[0]);
+        if (response?.topic?.startsWith('kline')) handleCandleData(response.data?.[0]);
         if (response?.topic?.startsWith('tickers')) {
             lastPrice = response?.data?.lastPrice;
         }
         if (response?.topic?.startsWith('orderbook')) {
-            // trackBidsOrderBook(response?.data, lastOrderBook);
             handleOrderbookUpdate(response);
-            // console.log(OrderBooks?.books?.['50']?.book);
-            const orderBooks = updateOrderBook(OrderBooks?.books?.['50']?.book);
-            const orderBookPercentage = performStrategyAnalysis(orderBooks);
+            await handleOrderBooksChanging();
         }
     });
 

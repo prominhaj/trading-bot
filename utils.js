@@ -1,37 +1,5 @@
-import { coinDecimal, stopLossPercentage, triggerPriceUp } from './bot.js';
-
-export const trackBidsOrderBook = (data, currentOrderBook) => {
-    // Apply bid deltas
-    data?.b?.forEach(([price, qty]) => {
-        const index = currentOrderBook.findIndex(([existingPrice]) => existingPrice === price);
-        if (qty === '0') {
-            // Remove zero quantity
-            if (index !== -1) {
-                currentOrderBook.splice(index, 1);
-            }
-        } else {
-            if (index !== -1) {
-                // Update existing bid
-                currentOrderBook[index][1] = qty;
-            } else {
-                // Insert new bid
-                currentOrderBook.push([price, qty]);
-            }
-        }
-    });
-};
-
-export const calculateStopLoss = (price) => {
+export const calculateStopLoss = (price, stopLossPercentage, coinDecimal) => {
     return parseFloat(price * (1 - stopLossPercentage / 100)).toFixed(coinDecimal);
-};
-
-export const calculateTriggerPrice = (price) => {
-    console.log({ triggerPriceUp, price });
-
-    const updatedPrice = price * (1 + triggerPriceUp);
-    console.log({ updatedPrice });
-
-    return parseFloat(updatedPrice).toFixed(coinDecimal);
 };
 
 export const calculateProfit = (buyPrice, sellPrice, qty) => {
@@ -45,10 +13,18 @@ export const calculateProfit = (buyPrice, sellPrice, qty) => {
     return totalProfitOrLoss.toFixed(4);
 };
 
-// Update order book based on your custom format
 export function updateOrderBook(updates) {
-    return updates?.map((order) => {
-        const [id, price, side, size] = order;
-        return { id, price, side, size };
-    });
+    const updatedOrders = new Array(updates.length);
+
+    for (let i = 0; i < updates.length; i++) {
+        const order = updates[i];
+        updatedOrders[i] = {
+            id: order[0],
+            price: order[1],
+            side: order[2],
+            size: order[3]
+        };
+    }
+
+    return updatedOrders;
 }

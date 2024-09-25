@@ -25,14 +25,15 @@ export const placeBuyOrder = (ws, symbol, qty, side, type, price = '0') => {
     console.log(`Limit Buy Order Sent: ${qty} ${symbol} at ${price}`);
 };
 
-export const placeLimitOrderWithSL = ({
+export const placeOrderWithSL = ({
     ws,
     symbol,
     qty,
     side,
     price = '0',
     triggerPrice,
-    slLimitPrice
+    slLimitPrice,
+    orderType
 }) => {
     const timestamp = Date.now();
     const orderPayload = {
@@ -46,7 +47,7 @@ export const placeLimitOrderWithSL = ({
                 category: 'spot',
                 symbol: symbol,
                 side: side,
-                orderType: 'Limit',
+                orderType,
                 qty: qty,
                 price: price,
                 timeInForce: 'GTC',
