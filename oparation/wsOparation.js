@@ -1,3 +1,5 @@
+import { getServerTime } from './bybit-api.js';
+
 // Function to place a buy order using the WebSocket // Working
 export const placeBuyOrder = (ws, symbol, qty, side, type, price = '0') => {
     const timestamp = Date.now();
@@ -25,7 +27,7 @@ export const placeBuyOrder = (ws, symbol, qty, side, type, price = '0') => {
     console.log(`Limit Buy Order Sent: ${qty} ${symbol} at ${price}`);
 };
 
-export const placeOrderWithSL = ({
+export const placeOrderWithSL = async ({
     ws,
     symbol,
     qty,
@@ -35,11 +37,12 @@ export const placeOrderWithSL = ({
     slLimitPrice,
     orderType
 }) => {
-    const timestamp = Date.now();
+    const timestamp = await getServerTime();
+    const recvWindow = '5000';
     const orderPayload = {
         header: {
             'X-BAPI-TIMESTAMP': timestamp,
-            'X-BAPI-RECV-WINDOW': '20000'
+            'X-BAPI-RECV-WINDOW': recvWindow
         },
         op: 'order.create',
         args: [
@@ -57,6 +60,9 @@ export const placeOrderWithSL = ({
             }
         ]
     };
+
+    // Add an additional log to check the timestamp accuracy
+    console.log({ timestamp, recvWindow });
 
     ws.send(JSON.stringify(orderPayload));
 };
@@ -116,8 +122,7 @@ export const updateBuyOrder = (ws, orderId, newPrice) => {
     const updateOrderPayload = {
         header: {
             'X-BAPI-TIMESTAMP': timestamp,
-            'X-BAPI-RECV-WINDOW': '8000',
-            Referer: 'bot-001'
+            'X-BAPI-RECV-WINDOW': '8000'
         },
         op: 'order.amend',
         args: [

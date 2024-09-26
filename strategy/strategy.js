@@ -34,19 +34,21 @@ export function performStrategyAnalysis(orderBook) {
     // console.log({ bidPercentage, askPercentage });
 
     // Determine market signal based on order flow imbalance
+    const { spread, highestBid, lowestAsk } = calculateSpread(orderBook);
     if (bidPercentage <= 40) {
-        const { spread, highestBid, lowestAsk } = calculateSpread(orderBook);
         return {
             highestOrder: highestBid,
             signal: 'Buy'
         };
     } else if (askPercentage <= 40) {
         return {
-            signal: 'Sell'
+            signal: 'Sell',
+            highestOrder: highestBid
         };
     } else {
         return {
-            signal: 'Hold'
+            signal: 'Hold',
+            highestOrder: highestBid
         };
     }
 }

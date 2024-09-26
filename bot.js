@@ -142,8 +142,6 @@ const placeBuyLimitOrder = async (highestOrder) => {
         qtyDecimal
     );
 
-    console.log((highestOrder + triggerPriceUp).toFixed(2));
-
     // Place the limit order with Stop-Loss
     placeOrderWithSL({
         ws: wsTrade,

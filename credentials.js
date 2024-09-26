@@ -5,7 +5,7 @@ export const API_KEY = process.env.API_KEY;
 export const API_SECRET = process.env.API_SECRET;
 
 // Generate the correct expires timestamp and signature
-const generateSignature = (expires) => {
+export const generateSignature = (expires) => {
     const preHashString = `GET/realtime${expires}`;
     return crypto.createHmac('sha256', API_SECRET).update(preHashString).digest('hex');
 };
