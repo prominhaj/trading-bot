@@ -1,8 +1,8 @@
 import { getServerTime } from './bybit-api.js';
 
 // Function to place a buy order using the WebSocket // Working
-export const placeBuyOrder = (ws, symbol, qty, side, type, price = '0') => {
-    const timestamp = Date.now();
+export const placeBuyOrder = async (ws, symbol, qty, side, type, price = '0') => {
+    const timestamp = await getServerTime();
     const orderPayload = {
         header: {
             'X-BAPI-TIMESTAMP': timestamp,
@@ -61,9 +61,6 @@ export const placeOrderWithSL = async ({
         ]
     };
 
-    // Add an additional log to check the timestamp accuracy
-    console.log({ timestamp, recvWindow });
-
     ws.send(JSON.stringify(orderPayload));
 };
 
@@ -94,12 +91,19 @@ export const createTPSLOrder = ({ ws, symbol, qty, type, side, price = '0', trig
     ws.send(JSON.stringify(orderPayload));
 };
 
-export const updateTPSLOrder = ({ ws, orderId, symbol, stopLossPrice, triggerPrice }) => {
-    const timestamp = Date.now();
+export const updateTPSLOrder = async ({
+    ws,
+    orderId,
+    symbol,
+    stopLossPrice,
+    triggerPrice,
+    slOrderType
+}) => {
+    const timestamp = await getServerTime();
     const updateOrderPayload = {
         header: {
             'X-BAPI-TIMESTAMP': timestamp,
-            'X-BAPI-RECV-WINDOW': '10000'
+            'X-BAPI-RECV-WINDOW': '5000'
         },
         op: 'order.amend',
         args: [
@@ -108,7 +112,7 @@ export const updateTPSLOrder = ({ ws, orderId, symbol, stopLossPrice, triggerPri
                 symbol: symbol,
                 price: stopLossPrice,
                 category: 'spot',
-                slOrderType: 'Limit',
+                slOrderType,
                 triggerPrice
             }
         ]
@@ -117,12 +121,12 @@ export const updateTPSLOrder = ({ ws, orderId, symbol, stopLossPrice, triggerPri
 };
 
 // Function to update the buy order price using the WebSocket // Working
-export const updateBuyOrder = (ws, orderId, newPrice) => {
-    const timestamp = Date.now();
+export const updateBuyOrder = async (ws, orderId, newPrice) => {
+    const timestamp = await getServerTime();
     const updateOrderPayload = {
         header: {
             'X-BAPI-TIMESTAMP': timestamp,
-            'X-BAPI-RECV-WINDOW': '8000'
+            'X-BAPI-RECV-WINDOW': '5000'
         },
         op: 'order.amend',
         args: [
@@ -141,12 +145,12 @@ export const updateBuyOrder = (ws, orderId, newPrice) => {
 };
 
 // Function to place a stop-loss order
-export const updateSLOrder = (ws, symbol, stopPrice, slLimitPrice) => {
-    const timestamp = Date.now();
+export const updateSLOrder = async (ws, symbol, stopPrice, slLimitPrice) => {
+    const timestamp = await getServerTime();
     const stopLossPayload = {
         header: {
             'X-BAPI-TIMESTAMP': timestamp,
-            'X-BAPI-RECV-WINDOW': '8000'
+            'X-BAPI-RECV-WINDOW': '5000'
         },
         op: 'order.update',
         args: [
@@ -161,5 +165,24 @@ export const updateSLOrder = (ws, symbol, stopPrice, slLimitPrice) => {
         ]
     };
 
+    ws.send(JSON.stringify(stopLossPayload));
+};
+
+export const cancelledOrder = async ({ ws, symbol, orderId }) => {
+    const timestamp = await getServerTime();
+    const stopLossPayload = {
+        header: {
+            'X-BAPI-TIMESTAMP': timestamp,
+            'X-BAPI-RECV-WINDOW': '5000'
+        },
+        op: 'order.cancel',
+        args: [
+            {
+                symbol: symbol,
+                category: 'spot',
+                orderId
+            }
+        ]
+    };
     ws.send(JSON.stringify(stopLossPayload));
 };

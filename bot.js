@@ -1,6 +1,6 @@
 import { WebSocket } from 'ws';
 import { authenticate } from './credentials.js';
-import { placeOrderWithSL, updateTPSLOrder } from './oparation/wsOparation.js';
+import { cancelledOrder, placeOrderWithSL, updateTPSLOrder } from './oparation/wsOparation.js';
 import { subscribeCandleAndOrderBook, subscribeToOrderAndWallet } from './subscribe/subscribe.js';
 import { isGreenCandle, performStrategyAnalysis } from './strategy/strategy.js';
 import { calculateProfit, calculateStopLoss, updateOrderBook } from './utils.js';
@@ -13,13 +13,14 @@ const wsTradeURL = 'wss://stream.bybit.com/v5/trade';
 const wsPublicURL = 'wss://stream.bybit.com/v5/public/spot';
 
 // Trade Settings
-const tradeCoin = 'SOL';
+const tradeCoin = 'ETH';
 const symbol = `${tradeCoin}USDC`;
 const initialStopLoss = 0.05;
-const stopLossPercentage = 0.025;
-export const triggerPriceUp = 0.01;
+const stopLossPercentage = 0.01;
+export const triggerPriceUp = 0.1;
 export const coinDecimal = 2;
-const qtyDecimal = 3;
+const qtyDecimal = 5;
+const orderUP = 0.3;
 
 // Variables to track orders
 let limitOrderId = null;
@@ -31,6 +32,7 @@ let is1minGreenCandle = null;
 let is15minGreenCandle = null;
 let lastPrice = null;
 let isOrderPlaced = false;
+let sellLimitOrderId = null;
 
 let ws, wsTrade, wsPublic;
 
@@ -58,11 +60,16 @@ const handleOrderUpdate = (orders) => {
     orders.forEach((order) => {
         switch (order?.orderStatus) {
             case 'New':
-                limitOrderId = order?.orderId;
-                limitOrderPrice = order?.price;
-                buyOrderPrice = order?.price;
-                orderStatus = order?.orderStatus;
-                isOrderPlaced = false;
+                if (order?.side === 'Buy') {
+                    limitOrderId = order?.orderId;
+                    limitOrderPrice = order?.price;
+                    buyOrderPrice = order?.price;
+                    orderStatus = order?.orderStatus;
+                    isOrderPlaced = false;
+                }
+                if (order?.side === 'Sell') {
+                    sellLimitOrderId = order?.orderId;
+                }
                 break;
             case 'Untriggered':
                 unTriggerOrderId = order?.orderId;
@@ -91,12 +98,20 @@ const resetOrderTracking = () => {
     unTriggerOrderId = null;
     orderStatus = null;
     isOrderPlaced = false;
+    sellLimitOrderId = null;
 };
 
 // Handle candle data and check for conditions to place an order
 const handleCandleData = async (candle) => {
     if (candle?.interval === '1') is1minGreenCandle = isGreenCandle(candle);
     if (candle?.interval === '15') is15minGreenCandle = isGreenCandle(candle);
+};
+
+const handleChangeTickers = async (price) => {
+    lastPrice = price;
+    if (sellLimitOrderId && limitOrderPrice > price) {
+        console.log('Stop Loss Market Order Sell');
+    }
 };
 
 const handleOrderBooksChanging = async () => {
@@ -108,9 +123,10 @@ const handleOrderBooksChanging = async () => {
     if (unTriggerOrderId && orderStatus === 'Untriggered' && limitOrderPrice < lastOrderPrice) {
         const stopLossPrice = calculateStopLoss(lastOrderPrice, stopLossPercentage, coinDecimal);
         const triggerPrice = (parseFloat(stopLossPrice) + triggerPriceUp).toFixed(coinDecimal);
-        updateTPSLOrder({
+        await updateTPSLOrder({
             ws: wsTrade,
             orderId: unTriggerOrderId,
+            slOrderType: 'Limit',
             symbol,
             stopLossPrice,
             triggerPrice
@@ -131,32 +147,74 @@ const handleOrderBooksChanging = async () => {
         isOrderPlaced = true;
         await placeBuyLimitOrder(lastOrderPrice);
     }
+
+    if (
+        orderStatus === 'New' &&
+        limitOrderId &&
+        parseFloat(lastOrderPrice) > parseFloat(buyOrderPrice) + orderUP
+    ) {
+        await cancelledOrder({ ws: wsTrade, symbol, orderId: limitOrderId });
+        console.log(`Cancelled Order: ${limitOrderId}`);
+        resetOrderTracking();
+    }
 };
 
-// Function to place a buy limit order
 const placeBuyLimitOrder = async (highestOrder) => {
-    const slPrice = calculateStopLoss(parseFloat(highestOrder), initialStopLoss, coinDecimal);
-    const triggerPrice = (parseFloat(slPrice) + triggerPriceUp).toFixed(coinDecimal);
-    const walletBalance = (await getWalletBalance('USDC'))?.[0]?.availableToWithdraw - 0.2;
-    const qty = (parseFloat(walletBalance) / parseFloat(highestOrder + triggerPriceUp)).toFixed(
-        qtyDecimal
-    );
+    try {
+        // Validate highestOrder before using it
+        if (
+            !highestOrder ||
+            isNaN(highestOrder) ||
+            highestOrder <= 0 ||
+            highestOrder === -Infinity
+        ) {
+            throw new Error(`Invalid highestOrder for placing buy limit order: ${highestOrder}`);
+        }
 
-    // Place the limit order with Stop-Loss
-    placeOrderWithSL({
-        ws: wsTrade,
-        symbol,
-        qty,
-        side: 'Buy',
-        orderType: 'Limit',
-        price: (highestOrder + triggerPriceUp).toFixed(2),
-        triggerPrice,
-        slLimitPrice: slPrice
-    });
+        const slPrice = calculateStopLoss(highestOrder, initialStopLoss, coinDecimal);
 
-    console.log(
-        `Placed Buy Limit Order at Price: ${lastPrice} initial Stop Loss Price: ${slPrice}`
-    );
+        if (isNaN(slPrice) || slPrice <= 0) {
+            throw new Error(`Invalid Stop Loss Price calculated: ${slPrice}`);
+        }
+
+        const triggerPrice = (parseFloat(slPrice) + triggerPriceUp).toFixed(coinDecimal);
+
+        // Check available wallet balance
+        const walletBalance = (await getWalletBalance('USDC'))?.[0]?.availableToWithdraw - 0.2;
+
+        if (isNaN(walletBalance) || walletBalance <= 0) {
+            throw new Error(`Invalid Wallet Balance: ${walletBalance}`);
+        }
+
+        // Calculate the quantity based on available balance and price
+        const qty = (parseFloat(walletBalance) / parseFloat(highestOrder + triggerPriceUp)).toFixed(
+            qtyDecimal
+        );
+
+        if (isNaN(qty) || qty <= 0) {
+            throw new Error(`Invalid Quantity calculated: ${qty}`);
+        }
+
+        console.log(
+            `Placing Buy Limit Order at Price: ${
+                highestOrder + triggerPriceUp
+            }, Stop Loss Price: ${slPrice}`
+        );
+
+        await placeOrderWithSL({
+            ws: wsTrade,
+            symbol,
+            qty,
+            side: 'Buy',
+            orderType: 'Limit',
+            price: (highestOrder + triggerPriceUp).toFixed(2),
+            triggerPrice,
+            slLimitPrice: slPrice
+        });
+    } catch (error) {
+        console.error('Error in placeBuyLimitOrder:', error.message);
+        restartBot(); // Call to restart the bot on any error
+    }
 };
 
 // WebSocket Initializers with reconnect logic
@@ -215,7 +273,7 @@ const initializePublicWebSocket = (wsPublic) => {
         const response = JSON.parse(data);
         if (response?.topic?.startsWith('kline')) handleCandleData(response.data?.[0]);
         if (response?.topic?.startsWith('tickers')) {
-            lastPrice = response?.data?.lastPrice;
+            await handleChangeTickers(response?.data?.lastPrice);
         }
         if (response?.topic?.startsWith('orderbook')) {
             handleOrderbookUpdate(response);
@@ -239,6 +297,11 @@ const initializeWebSocketConnections = () => {
     initializePrivateWebSocket(ws);
     initializeTradeWebSocket(wsTrade);
     initializePublicWebSocket(wsPublic);
+};
+
+const restartBot = () => {
+    console.error('Restarting bot due to error...');
+    initializeWebSocketConnections();
 };
 
 // Start the bot

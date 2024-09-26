@@ -10,20 +10,23 @@ export function isGreenCandle(lastCandle) {
 // Perform Order Flow Imbalance Analysis, Wall Detection, and Arbitrage
 export function performStrategyAnalysis(orderBook) {
     let totalBidQty = 0,
-        totalAskQty = 0;
+        totalAskQty = 0,
+        highestBid = -Infinity,
+        lowestAsk = Infinity;
 
-    // Calculate total bid and ask volumes in a single pass
+    // Calculate total bid, ask volumes, highestBid, and lowestAsk in a single pass
     orderBook.forEach((order) => {
-        if (order.side === 'Buy') {
-            totalBidQty += order.size;
-        } else if (order.side === 'Sell') {
-            totalAskQty += order.size;
+        if (order.size) {
+            if (order.side === 'Buy') {
+                totalBidQty += order.size;
+                highestBid = Math.max(highestBid, order.price);
+            } else if (order.side === 'Sell') {
+                totalAskQty += order.size;
+                lowestAsk = Math.min(lowestAsk, order.price);
+            }
         }
     });
 
-    // analyzeMarketVolatility(orderBook);
-
-    // Calculate total volume
     const totalVolume = totalBidQty + totalAskQty;
     if (totalVolume === 0) return; // Avoid division by zero
 
@@ -31,10 +34,10 @@ export function performStrategyAnalysis(orderBook) {
     const bidPercentage = (totalBidQty / totalVolume) * 100;
     const askPercentage = (totalAskQty / totalVolume) * 100;
 
-    // console.log({ bidPercentage, askPercentage });
+    // Calculate the spread
+    const spread = lowestAsk - highestBid;
 
     // Determine market signal based on order flow imbalance
-    const { spread, highestBid, lowestAsk } = calculateSpread(orderBook);
     if (bidPercentage <= 40) {
         return {
             highestOrder: highestBid,
@@ -69,16 +72,19 @@ export function getOrdersBySide(orderBook, side, sort = false) {
 
 // Function to calculate the bid-ask spread
 const calculateSpread = (orderBook) => {
-    const highestBid = Math.max(
-        ...orderBook
-            .filter((order) => order.side === 'Buy' && order.size)
-            .map((order) => order.price)
-    );
-    const lowestAsk = Math.min(
-        ...orderBook
-            .filter((order) => order.side === 'Sell' && order.size)
-            .map((order) => order.price)
-    );
+    let highestBid = -Infinity;
+    let lowestAsk = Infinity;
+
+    for (const order of orderBook) {
+        if (order.size) {
+            if (order.side === 'Buy') {
+                highestBid = Math.max(highestBid, order.price);
+            } else if (order.side === 'Sell') {
+                lowestAsk = Math.min(lowestAsk, order.price);
+            }
+        }
+    }
+
     const spread = lowestAsk - highestBid;
     return { spread, highestBid, lowestAsk };
 };
