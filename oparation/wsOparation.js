@@ -1,7 +1,7 @@
 import { getServerTime } from './bybit-api.js';
 
 // Function to place a buy order using the WebSocket // Working
-export const placeBuyOrder = async (ws, symbol, qty, side, type, price = '0') => {
+export const placeMarketOrder = async ({ ws, symbol, qty, side }) => {
     const timestamp = await getServerTime();
     const orderPayload = {
         header: {
@@ -14,9 +14,9 @@ export const placeBuyOrder = async (ws, symbol, qty, side, type, price = '0') =>
             {
                 symbol: symbol,
                 side: side,
-                orderType: type,
-                qty: qty,
-                price: price,
+                orderType: 'Market',
+                qty,
+                price: '0',
                 category: 'spot',
                 timeInForce: 'GTC'
             }
@@ -24,7 +24,6 @@ export const placeBuyOrder = async (ws, symbol, qty, side, type, price = '0') =>
     };
 
     ws.send(JSON.stringify(orderPayload));
-    console.log(`Limit Buy Order Sent: ${qty} ${symbol} at ${price}`);
 };
 
 export const placeOrderWithSL = async ({
@@ -52,7 +51,7 @@ export const placeOrderWithSL = async ({
                 side: side,
                 orderType,
                 qty: qty,
-                price: price,
+                price: price.toString(),
                 timeInForce: 'GTC',
                 stopLoss: triggerPrice,
                 slOrderType: 'Limit',
@@ -121,7 +120,7 @@ export const updateTPSLOrder = async ({
 };
 
 // Function to update the buy order price using the WebSocket // Working
-export const updateBuyOrder = async (ws, orderId, newPrice) => {
+export const updatePlaceOrder = async ({ ws, symbol, orderId, price = '0', orderType }) => {
     const timestamp = await getServerTime();
     const updateOrderPayload = {
         header: {
@@ -132,16 +131,15 @@ export const updateBuyOrder = async (ws, orderId, newPrice) => {
         args: [
             {
                 order_id: orderId,
-                symbol: 'SOLUSDC',
-                price: newPrice.toString(),
-                category: 'spot',
-                timeInForce: 'GTC'
+                symbol,
+                price,
+                orderType,
+                category: 'spot'
             }
         ]
     };
 
     ws.send(JSON.stringify(updateOrderPayload));
-    console.log(`Buy Order Updated: Order ID ${orderId}, New Price: ${newPrice}`);
 };
 
 // Function to place a stop-loss order

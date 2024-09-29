@@ -12,19 +12,3 @@ export const calculateProfit = (buyPrice, sellPrice, qty) => {
 
     return totalProfitOrLoss.toFixed(4);
 };
-
-export function updateOrderBook(updates) {
-    const updatedOrders = new Array(updates.length);
-
-    for (let i = 0; i < updates.length; i++) {
-        const order = updates[i];
-        updatedOrders[i] = {
-            id: order[0],
-            price: order[1],
-            side: order[2],
-            size: order[3]
-        };
-    }
-
-    return updatedOrders;
-}

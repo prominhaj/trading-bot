@@ -14,46 +14,53 @@ export function performStrategyAnalysis(orderBook) {
         highestBid = -Infinity,
         lowestAsk = Infinity;
 
-    // Calculate total bid, ask volumes, highestBid, and lowestAsk in a single pass
-    orderBook.forEach((order) => {
-        if (order.size) {
-            if (order.side === 'Buy') {
-                totalBidQty += order.size;
-                highestBid = Math.max(highestBid, order.price);
-            } else if (order.side === 'Sell') {
-                totalAskQty += order.size;
-                lowestAsk = Math.min(lowestAsk, order.price);
-            }
+    // Single-pass loop for all calculations
+    for (let i = 0; i < orderBook.length; i++) {
+        const order = orderBook[i];
+        const size = order[3];
+
+        // Skip invalid or zero-size orders immediately
+        if (size <= 0) continue;
+
+        const price = order[1];
+        const side = order[2];
+
+        // Aggregate quantities and find highest bid and lowest ask in one pass
+        if (side === 'Buy') {
+            totalBidQty += size;
+            if (price > highestBid) highestBid = price;
+        } else if (side === 'Sell') {
+            totalAskQty += size;
+            if (price < lowestAsk) lowestAsk = price;
         }
-    });
+    }
 
+    // Avoid division by zero
     const totalVolume = totalBidQty + totalAskQty;
-    if (totalVolume === 0) return; // Avoid division by zero
+    if (totalVolume === 0) return;
 
-    // Calculate bid/ask percentages
+    // Calculate percentages in a single pass
     const bidPercentage = (totalBidQty / totalVolume) * 100;
-    const askPercentage = (totalAskQty / totalVolume) * 100;
+    const askPercentage = 100 - bidPercentage; // Since it's just the complement
 
-    // Calculate the spread
+    // Calculate spread
     const spread = lowestAsk - highestBid;
 
-    // Determine market signal based on order flow imbalance
+    // Determine signal based on the order flow imbalance
+    let signal;
     if (bidPercentage <= 40) {
-        return {
-            highestOrder: highestBid,
-            signal: 'Buy'
-        };
+        signal = 'Buy';
     } else if (askPercentage <= 40) {
-        return {
-            signal: 'Sell',
-            highestOrder: highestBid
-        };
+        signal = 'Sell';
     } else {
-        return {
-            signal: 'Hold',
-            highestOrder: highestBid
-        };
+        signal = 'Hold';
     }
+
+    return {
+        highestOrder: highestBid,
+        signal,
+        spread
+    };
 }
 
 // Helper function to get orders by side (Buy or Sell) and optionally sort

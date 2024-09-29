@@ -1,7 +1,7 @@
 export const subscribeToOrderAndWallet = (ws) => {
     const orderPayload = {
         op: 'subscribe',
-        args: ['order']
+        args: ['order', 'wallet']
     };
 
     ws.send(JSON.stringify(orderPayload));

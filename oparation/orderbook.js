@@ -6,16 +6,22 @@ export const OrderBooks = new OrderBooksStore({
     maxDepth: 50
 });
 
-// Helper to process both bid and ask levels
+// Optimized helper function to process levels with less overhead
 const processOrderLevels = (levels, symbol, side) => {
     const upsertLevels = [];
     const deleteLevels = [];
 
+    // Avoid unnecessary conversions by parsing once and using loop efficiently
     for (let i = 0; i < levels.length; i++) {
-        const [price, amount] = levels[i];
-        const level = OrderBookLevel(symbol, +price, side, +amount);
+        const price = +levels[i][0];
+        const amount = +levels[i][1];
 
-        // If amount is 0, mark for deletion; otherwise, mark for insertion/updating
+        // Skip if price is invalid (NaN) or zero, amount will be checked below
+        if (!price) continue;
+
+        // Directly create OrderBookLevel and push to the respective array
+        const level = new OrderBookLevel(symbol, price, side, amount);
+
         if (amount === 0) {
             deleteLevels.push(level);
         } else {
@@ -29,7 +35,7 @@ export function handleOrderbookUpdate(message) {
     const { topic, type, data, cts } = message;
     const [_, symbol] = topic.split('.');
 
-    // Process bid and ask levels separately
+    // Combined and direct processing of both bid and ask levels
     const { upsertLevels: upsertBids, deleteLevels: deleteBids } = processOrderLevels(
         data.b,
         symbol,
@@ -41,16 +47,19 @@ export function handleOrderbookUpdate(message) {
         'Sell'
     );
 
-    const upsertLevels = [...upsertBids, ...upsertAsks];
-    const deleteLevels = [...deleteBids, ...deleteAsks];
+    // Combine bid and ask levels only once for better performance
+    const upsertLevels = upsertBids.concat(upsertAsks);
+    const deleteLevels = deleteBids.concat(deleteAsks);
 
-    if (type === 'snapshot') {
-        // Handle the initial snapshot of the order book
-        OrderBooks.handleSnapshot(symbol, upsertLevels, cts);
-    } else if (type === 'delta') {
-        // Handle incremental changes (delta updates)
-        OrderBooks.handleDelta(symbol, deleteLevels, upsertLevels, [], cts);
-    } else {
-        console.error('Unhandled orderbook update type:', type);
+    // Handle the message type accordingly
+    switch (type) {
+        case 'snapshot':
+            OrderBooks.handleSnapshot(symbol, upsertLevels, cts);
+            break;
+        case 'delta':
+            OrderBooks.handleDelta(symbol, deleteLevels, upsertLevels, [], cts);
+            break;
+        default:
+            console.error('Unhandled orderbook update type:', type);
     }
 }
