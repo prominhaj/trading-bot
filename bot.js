@@ -4,103 +4,102 @@ import {
     cancelledOrder,
     placeMarketOrder,
     placeOrderWithSL,
-    updatePlaceOrder,
     updateTPSLOrder
-} from './oparation/wsOparation.js';
+} from './operation/wsOperation.js';
 import { subscribeCandleAndOrderBook, subscribeToOrderAndWallet } from './subscribe/subscribe.js';
 import { isGreenCandle, performStrategyAnalysis } from './strategy/strategy.js';
 import { calculateProfit, calculateStopLoss } from './utils.js';
-import { getWalletBalance } from './oparation/bybit-api.js';
-import { handleOrderbookUpdate, OrderBooks } from './oparation/orderbook.js';
+import { getWalletBalance } from './operation/bybit-api.js';
+import { handleOrderbookUpdate, OrderBooks } from './operation/orderbook.js';
 
 // WebSocket URLs
-const wsURL = 'wss://stream.bybit.com/v5/private';
-const wsTradeURL = 'wss://stream.bybit.com/v5/trade';
-const wsPublicURL = 'wss://stream.bybit.com/v5/public/spot';
+const wsURLs = {
+    private: 'wss://stream.bybit.com/v5/private',
+    trade: 'wss://stream.bybit.com/v5/trade',
+    public: 'wss://stream.bybit.com/v5/public/spot'
+};
 
 // Trade Settings
-const tradeCoin = 'ETH';
-const symbol = `${tradeCoin}USDC`;
-const initialStopLoss = 0.03;
-const stopLossPercentage = 0.005;
-export const triggerPriceUp = 0.05;
-export const coinDecimal = 2;
-const qtyDecimal = 5;
-const orderUP = 0.2;
+export const tradeSettings = {
+    coin: 'ETH',
+    symbol: 'ETHUSDC',
+    initialStopLoss: 0.02,
+    stopLossPercentage: 0.003,
+    triggerPriceUp: 0.05,
+    coinDecimal: 2,
+    qtyDecimal: 5,
+    orderUp: 0.2
+};
 
-// Variables to track orders
-let limitOrderId = null;
-let equityBalance = null;
-let buyOrderPrice = null;
-let limitOrderPrice = null;
-let unTriggerOrderId = null;
-let orderStatus = null;
-let is1minGreenCandle = null;
-let is15minGreenCandle = null;
-let lastPrice = null;
-let sellLimitOrderId = null;
-let sellQty = null;
-let sellOrderPrice = null;
-let isOrderPlaced = false;
-let isCancelOrder = false;
-let isSellOrderCancel = false;
+// Order Tracking Variables
+export let orderTracking = {
+    limitOrderId: null,
+    equityBalance: null,
+    buyOrderPrice: null,
+    limitOrderPrice: null,
+    unTriggerOrderId: null,
+    orderStatus: null,
+    isOrderPlaced: false,
+    isCancelOrder: false,
+    sellOrder: {
+        id: null,
+        qty: null,
+        price: null,
+        isCancel: false
+    },
+    isGreenCandle: {
+        '1min': null,
+        '15min': null
+    },
+    lastPrice: null
+};
 
-let ws, wsTrade, wsPublic;
-
+let orderBooks = [];
 const reconnectDelay = 1000;
+export let wsConnections = {};
 
 // Reconnection logic for WebSocket
 const reconnectWebSocket = (wsUrl, wsType) => {
-    console.log(`Attempting to reconnect ${wsType} WebSocket...`);
-    setTimeout(() => {
-        if (wsType === 'Private') {
-            ws = new WebSocket(wsUrl);
-            initializePrivateWebSocket(ws);
-        } else if (wsType === 'Trade') {
-            wsTrade = new WebSocket(wsUrl);
-            initializeTradeWebSocket(wsTrade);
-        } else if (wsType === 'Public') {
-            wsPublic = new WebSocket(wsUrl);
-            initializePublicWebSocket(wsPublic);
-        }
-    }, reconnectDelay);
+    console.log(`Reconnecting ${wsType} WebSocket...`);
+    setTimeout(() => initializeWebSocket(wsUrl, wsType), reconnectDelay);
 };
 
-// Function to handle order updates
+// // Handle order updates
 const handleOrderUpdate = (orders) => {
     orders.forEach((order) => {
-        switch (order?.orderStatus) {
+        const { orderId, price, qty, orderStatus, side } = order;
+        const { sellOrder } = orderTracking;
+
+        switch (orderStatus) {
             case 'New':
-                if (order?.side === 'Buy') {
-                    limitOrderId = order?.orderId;
-                    limitOrderPrice = order?.price;
-                    buyOrderPrice = order?.price;
-                    orderStatus = order?.orderStatus;
-                    isOrderPlaced = false;
-                }
-                if (order?.side === 'Sell') {
-                    sellOrderPrice = order?.price;
-                    sellLimitOrderId = order?.orderId;
-                    sellQty = order?.qty;
-                    orderStatus = order?.orderStatus;
+                if (side === 'Buy') {
+                    Object.assign(orderTracking, {
+                        limitOrderId: orderId,
+                        limitOrderPrice: price,
+                        buyOrderPrice: price,
+                        orderStatus
+                    });
+                } else if (side === 'Sell') {
+                    Object.assign(sellOrder, { id: orderId, price, qty });
                 }
                 break;
             case 'Untriggered':
-                unTriggerOrderId = order?.orderId;
-                orderStatus = order?.orderStatus;
+                orderTracking.unTriggerOrderId = orderId;
+                orderTracking.orderStatus = orderStatus;
+                break;
+            case 'Cancelled':
+                if (side === 'Sell')
+                    placeMarketOrder({
+                        ws: wsConnections.trade,
+                        symbol: tradeSettings.symbol,
+                        qty,
+                        side: 'Sell'
+                    });
                 break;
             case 'Filled':
-                if (order?.side === 'Buy') {
-                    limitOrderId = null;
-                }
-                if (order?.side === 'Sell') {
-                    const profitOrLoss = parseFloat(
-                        calculateProfit(
-                            buyOrderPrice,
-                            parseFloat(order?.price),
-                            parseFloat(order?.qty)
-                        )
-                    );
+                if (side === 'Buy') orderTracking.limitOrderId = null;
+                if (side === 'Sell') {
+                    const profitOrLoss = calculateProfit(orderTracking.buyOrderPrice, price, qty);
                     console.log(`SL Hit ${profitOrLoss >= 0 ? 'Profit' : 'Loss'} $${profitOrLoss}`);
                     resetOrderTracking();
                 }
@@ -109,228 +108,196 @@ const handleOrderUpdate = (orders) => {
     });
 };
 
-// Handle Wallet Transaction
+// Handle Wallet updates
 const handleWalletUpdate = (walletData) => {
     const usdcBalance = walletData?.[0]?.coin?.find(({ coin }) => coin === 'USDC');
-    const availableBalance = parseFloat(usdcBalance?.availableToWithdraw);
-    if (usdcBalance && availableBalance > 10) {
-        equityBalance = availableBalance - 0.2;
-    }
+    if (usdcBalance)
+        orderTracking.equityBalance = parseFloat(usdcBalance.availableToWithdraw) - 0.2;
+};
+
+// Handle Candle Data
+const handleCandleData = (candle) => {
+    const interval = candle?.interval;
+    if (interval === '1') orderTracking.isGreenCandle['1min'] = isGreenCandle(candle);
+    if (interval === '15') orderTracking.isGreenCandle['15min'] = isGreenCandle(candle);
 };
 
 // Reset tracking variables after an order is completed or cancelled
 const resetOrderTracking = () => {
-    limitOrderId = null;
-    unTriggerOrderId = null;
-    orderStatus = null;
-    isOrderPlaced = false;
-    sellLimitOrderId = null;
-    isCancelOrder = false;
-    isSellOrderCancel = false;
-    sellOrderPrice = null;
+    orderTracking = {
+        ...orderTracking,
+        limitOrderId: null,
+        unTriggerOrderId: null,
+        orderStatus: null,
+        isOrderPlaced: false,
+        isCancelOrder: false,
+        sellOrder: {
+            id: null,
+            qty: null,
+            price: null,
+            isCancel: false
+        }
+    };
 };
 
-// Handle candle data and check for conditions to place an order
-const handleCandleData = async (candle) => {
-    if (candle?.interval === '1') is1minGreenCandle = isGreenCandle(candle);
-    if (candle?.interval === '15') is15minGreenCandle = isGreenCandle(candle);
-};
+// Update Stop-Loss when conditions are met
+const updateStopLoss = async () => {
+    const { unTriggerOrderId, orderStatus, limitOrderPrice, lastPrice } = orderTracking;
+    const { symbol, stopLossPercentage, coinDecimal } = tradeSettings;
 
-const handleStopLossMarketOrder = async () => {
-    const orderBooks = OrderBooks?.books?.['50']?.book;
-    const findPendingOrder = orderBooks.findIndex(
-        (order) => order[1] === parseFloat(sellOrderPrice) && order[2] === 'Sell'
-    );
+    if (
+        unTriggerOrderId &&
+        orderStatus === 'Untriggered' &&
+        parseFloat(limitOrderPrice) < parseFloat(lastPrice)
+    ) {
+        orderTracking.limitOrderPrice = lastPrice;
+        const stopLossPrice = calculateStopLoss(lastPrice, stopLossPercentage, coinDecimal);
+        const triggerPrice = (parseFloat(stopLossPrice) + tradeSettings.triggerPriceUp).toFixed(
+            coinDecimal
+        );
 
-    if (findPendingOrder <= 22 && findPendingOrder > 0 && !isSellOrderCancel && sellOrderPrice) {
-        isSellOrderCancel = true;
-        await cancelledOrder({
-            ws: wsTrade,
-            symbol,
-            orderId: sellLimitOrderId
-        });
-        await placeMarketOrder({
-            ws: wsTrade,
-            symbol,
-            qty: sellQty,
-            side: 'Sell'
-        });
-        console.log('Stop Loss Market Order Sell');
-    }
-};
-
-const handleChangeTickers = async (price) => {
-    lastPrice = price;
-};
-
-const handleOrderBooksChanging = async () => {
-    const orderBooks = OrderBooks?.books?.['50']?.book;
-    const orderBookSignal = performStrategyAnalysis(orderBooks);
-    const lastOrderPrice = orderBookSignal?.highestOrder;
-
-    // Update Stop-Loss when conditions are met
-    if (unTriggerOrderId && orderStatus === 'Untriggered' && limitOrderPrice < lastOrderPrice) {
-        const stopLossPrice = calculateStopLoss(lastOrderPrice, stopLossPercentage, coinDecimal);
-        const triggerPrice = (parseFloat(stopLossPrice) + triggerPriceUp).toFixed(coinDecimal);
         await updateTPSLOrder({
-            ws: wsTrade,
+            ws: wsConnections.trade,
             orderId: unTriggerOrderId,
             slOrderType: 'Limit',
             symbol,
             stopLossPrice,
             triggerPrice
         });
-        limitOrderPrice = lastOrderPrice;
         console.log(`Updated Stop Loss to ${stopLossPrice}`);
-    }
-
-    // Place a buy limit order if both candle conditions are green and no order is placed
-    if (
-        is1minGreenCandle &&
-        is15minGreenCandle &&
-        orderBookSignal?.signal === 'Buy' &&
-        !orderStatus &&
-        !limitOrderId &&
-        !isOrderPlaced
-    ) {
-        isOrderPlaced = true;
-        await placeBuyLimitOrder(lastOrderPrice);
-    }
-
-    if (orderStatus === 'New' && limitOrderId) {
-        const findOrder = orderBooks.findIndex(
-            (order) => order[1] === parseFloat(buyOrderPrice) && order[2] === 'Buy'
-        );
-
-        if (findOrder >= 28 && !isCancelOrder) {
-            isCancelOrder = true;
-            await cancelledOrder({ ws: wsTrade, symbol, orderId: limitOrderId });
-            console.log(`Cancelled Order: ${limitOrderId}`);
-            resetOrderTracking();
-        }
-    }
-    if (sellLimitOrderId && orderStatus === 'New') {
-        handleStopLossMarketOrder();
     }
 };
 
+// Place Buy Limit Order
 const placeBuyLimitOrder = async (highestOrder) => {
+    const { symbol, triggerPriceUp, coinDecimal, initialStopLoss, qtyDecimal } = tradeSettings;
+    const orderPrice = (highestOrder + triggerPriceUp).toFixed(coinDecimal);
     const slPrice = calculateStopLoss(highestOrder, initialStopLoss, coinDecimal);
     const triggerPrice = (parseFloat(slPrice) + triggerPriceUp).toFixed(coinDecimal);
-    // Check available wallet balance
-    const walletBalance = (
-        equityBalance || (await getWalletBalance('USDC'))?.[0]?.availableToWithdraw - 0.2
-    ).toFixed(2);
-    // Calculate the quantity based on available balance and price
+
+    const walletBalance =
+        orderTracking.equityBalance ||
+        (await getWalletBalance('USDC'))?.[0]?.availableToWithdraw - 0.2;
     const qty = (parseFloat(walletBalance) / parseFloat(highestOrder + triggerPriceUp)).toFixed(
         qtyDecimal
     );
 
-    console.log(
-        `Placing Buy Limit Order at Price: ${
-            highestOrder + triggerPriceUp
-        }, Stop Loss Price: ${slPrice}`
-    );
-
     await placeOrderWithSL({
-        ws: wsTrade,
+        ws: wsConnections.trade,
         symbol,
         qty,
         side: 'Buy',
         orderType: 'Limit',
-        price: (highestOrder + triggerPriceUp).toFixed(2),
+        price: orderPrice,
         triggerPrice,
         slLimitPrice: slPrice
     });
+    console.log(`Placed Buy Limit Order at Price: ${orderPrice}, Stop Loss: ${slPrice}`);
 };
 
-// WebSocket Initializers with reconnect logic
-const initializePrivateWebSocket = (ws) => {
+// Handle tickers updates
+const handleChangeTickers = (price) => {
+    orderTracking.lastPrice = price;
+};
+
+const handleStopLossMarketOrder = async () => {
+    const { sellOrder } = orderTracking;
+    const findOrder = orderBooks.findIndex(
+        (order) => order[1] === parseFloat(sellOrder.price) && order[2] === 'Sell'
+    );
+    console.log({ findOrder });
+
+    if (findOrder <= 20) {
+        await cancelledOrder({
+            ws: wsConnections.trade,
+            symbol: tradeSettings.symbol,
+            orderId: sellOrder.id
+        });
+        console.log(`Cancelled Sell Order: ${sellOrder.id}`);
+        resetOrderTracking();
+    }
+};
+
+// Handle Orderbook changes
+const handleOrderBooksChanging = async () => {
+    orderBooks = OrderBooks?.books?.['50']?.book;
+    const { isGreenCandle, lastPrice } = orderTracking;
+    const orderBookSignal = performStrategyAnalysis(orderBooks);
+    const lastOrderPrice = orderBookSignal?.highestOrder;
+
+    await updateStopLoss();
+
+    if (
+        isGreenCandle['1min'] &&
+        isGreenCandle['15min'] &&
+        orderBookSignal?.signal === 'Buy' &&
+        !orderTracking.orderStatus &&
+        !orderTracking.limitOrderId &&
+        !orderTracking.isOrderPlaced
+    ) {
+        orderTracking.isOrderPlaced = true;
+        await placeBuyLimitOrder(lastOrderPrice);
+    }
+
+    // Cancel Buy Order if necessary
+    if (orderTracking.orderStatus === 'New' && orderTracking.limitOrderId) {
+        const findOrder = orderBooks.findIndex(
+            (order) => order[1] === parseFloat(orderTracking.buyOrderPrice) && order[2] === 'Buy'
+        );
+        if (findOrder >= 30 && !orderTracking.isCancelOrder) {
+            orderTracking.isCancelOrder = true;
+            await cancelledOrder({
+                ws: wsConnections.trade,
+                symbol: tradeSettings.symbol,
+                orderId: orderTracking.limitOrderId
+            });
+            console.log(`Cancelled Order: ${orderTracking.limitOrderId}`);
+            resetOrderTracking();
+        }
+    }
+
+    // Handle Stop-Loss Market Order
+    if (
+        orderTracking.sellOrder.id &&
+        orderTracking.orderStatus === 'New' &&
+        !orderTracking.sellOrder.isCancel
+    ) {
+        console.log('Stop-Loss Market Order: ' + orderTracking.sellOrder);
+
+        orderTracking.sellOrder.isCancel = true;
+        await handleStopLossMarketOrder();
+    }
+};
+
+// Initialize WebSocket connections
+const initializeWebSocket = (wsUrl, wsType) => {
+    const ws = new WebSocket(wsUrl);
+    wsConnections[wsType.toLowerCase()] = ws;
+
     ws.on('open', () => {
-        console.log('Private WebSocket connected');
+        console.log(`${wsType} WebSocket connected`);
         authenticate(ws);
+        if (wsType === 'Public') subscribeCandleAndOrderBook(ws, tradeSettings.symbol);
     });
 
-    ws.on('message', (data) => {
+    ws.on('message', async (data) => {
         const response = JSON.parse(data);
         if (response.op === 'auth') subscribeToOrderAndWallet(ws);
-        if (response.topic === 'order') handleOrderUpdate(response.data);
-        if (response.topic === 'wallet') handleWalletUpdate(response.data);
-    });
-
-    ws.on('error', (error) => console.error('Private WebSocket Error:', error));
-    ws.on('close', () => {
-        console.log('Private WebSocket closed');
-        reconnectWebSocket(wsURL, 'Private');
-    });
-};
-
-const initializeTradeWebSocket = (wsTrade) => {
-    wsTrade.on('open', () => {
-        console.log('Trade WebSocket connected');
-        authenticate(wsTrade);
-    });
-
-    wsTrade.on('message', (data) => {
-        const response = JSON.parse(data);
-        if (response?.op === 'auth') console.log('Trade WebSocket authenticated');
-        if (response?.op === 'order.create') {
-            if (response.retCode === 0) {
-                limitOrderId = response?.data?.orderId;
-                console.log(`Order Placed: ${limitOrderId}`);
-            } else {
-                console.error(response?.retMsg);
-            }
-        }
-    });
-
-    wsTrade.on('error', (error) => console.error('Trade WebSocket Error:', error));
-    wsTrade.on('close', () => {
-        console.log('Trade WebSocket closed');
-        reconnectWebSocket(wsTradeURL, 'Trade');
-    });
-};
-
-const initializePublicWebSocket = (wsPublic) => {
-    wsPublic.on('open', () => {
-        console.log('Public WebSocket connected');
-        subscribeCandleAndOrderBook(wsPublic, symbol);
-    });
-
-    wsPublic.on('message', async (data) => {
-        const response = JSON.parse(data);
-        if (response?.topic?.startsWith('kline')) handleCandleData(response.data?.[0]);
-        if (response?.topic?.startsWith('tickers')) {
-            await handleChangeTickers(response?.data?.lastPrice);
-        }
+        if (response?.topic === 'order') handleOrderUpdate(response.data);
+        if (response?.topic === 'wallet') handleWalletUpdate(response.data);
+        if (response?.topic?.startsWith('kline')) handleCandleData(response.data[0]);
+        if (response?.topic?.startsWith('tickers')) handleChangeTickers(response.data.lastPrice);
         if (response?.topic?.startsWith('orderbook')) {
             handleOrderbookUpdate(response);
             await handleOrderBooksChanging();
         }
     });
 
-    wsPublic.on('error', (error) => console.error('Public WebSocket Error:', error));
-    wsPublic.on('close', () => {
-        console.log('Public WebSocket closed');
-        reconnectWebSocket(wsPublicURL, 'Public');
-    });
+    ws.on('error', (error) => console.error(`${wsType} WebSocket Error`, error));
+    ws.on('close', () => reconnectWebSocket(wsUrl, wsType));
 };
 
-// Start the bot with automatic reconnection
-const initializeWebSocketConnections = () => {
-    ws = new WebSocket(wsURL);
-    wsTrade = new WebSocket(wsTradeURL);
-    wsPublic = new WebSocket(wsPublicURL);
-
-    initializePrivateWebSocket(ws);
-    initializeTradeWebSocket(wsTrade);
-    initializePublicWebSocket(wsPublic);
-};
-
-const restartBot = () => {
-    console.log('Restarting bot due to error...');
-    initializeWebSocketConnections();
-};
-
-// Start the bot
-initializeWebSocketConnections();
+// Start WebSocket connections
+initializeWebSocket(wsURLs.public, 'Public');
+initializeWebSocket(wsURLs.private, 'Private');
+initializeWebSocket(wsURLs.trade, 'Trade');

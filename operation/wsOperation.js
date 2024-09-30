@@ -6,14 +6,13 @@ export const placeMarketOrder = async ({ ws, symbol, qty, side }) => {
     const orderPayload = {
         header: {
             'X-BAPI-TIMESTAMP': timestamp,
-            'X-BAPI-RECV-WINDOW': '8000',
-            Referer: 'bot-001'
+            'X-BAPI-RECV-WINDOW': '8000'
         },
         op: 'order.create',
         args: [
             {
-                symbol: symbol,
-                side: side,
+                symbol,
+                side,
                 orderType: 'Market',
                 qty,
                 price: '0',
