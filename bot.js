@@ -81,6 +81,9 @@ const handleOrderUpdate = (orders) => {
                     });
                 } else if (side === 'Sell') {
                     Object.assign(sellOrder, { id: orderId, price, qty });
+                    Object.assign(orderTracking, {
+                        orderStatus
+                    });
                 }
                 break;
             case 'Untriggered':
@@ -111,8 +114,10 @@ const handleOrderUpdate = (orders) => {
 // Handle Wallet updates
 const handleWalletUpdate = (walletData) => {
     const usdcBalance = walletData?.[0]?.coin?.find(({ coin }) => coin === 'USDC');
-    if (usdcBalance)
-        orderTracking.equityBalance = parseFloat(usdcBalance.availableToWithdraw) - 0.2;
+    const availableBalance = parseFloat(usdcBalance?.availableToWithdraw);
+    if (availableBalance > 10) {
+        orderTracking.equityBalance = availableBalance - 0.2;
+    }
 };
 
 // Handle Candle Data
@@ -205,9 +210,8 @@ const handleStopLossMarketOrder = async () => {
     const findOrder = orderBooks.findIndex(
         (order) => order[1] === parseFloat(sellOrder.price) && order[2] === 'Sell'
     );
-    console.log({ findOrder });
 
-    if (findOrder <= 20) {
+    if (findOrder === -1 || findOrder <= 20) {
         await cancelledOrder({
             ws: wsConnections.trade,
             symbol: tradeSettings.symbol,
@@ -244,7 +248,8 @@ const handleOrderBooksChanging = async () => {
         const findOrder = orderBooks.findIndex(
             (order) => order[1] === parseFloat(orderTracking.buyOrderPrice) && order[2] === 'Buy'
         );
-        if (findOrder >= 30 && !orderTracking.isCancelOrder) {
+
+        if (findOrder === -1 || (findOrder >= 30 && !orderTracking.isCancelOrder)) {
             orderTracking.isCancelOrder = true;
             await cancelledOrder({
                 ws: wsConnections.trade,
@@ -262,8 +267,6 @@ const handleOrderBooksChanging = async () => {
         orderTracking.orderStatus === 'New' &&
         !orderTracking.sellOrder.isCancel
     ) {
-        console.log('Stop-Loss Market Order: ' + orderTracking.sellOrder);
-
         orderTracking.sellOrder.isCancel = true;
         await handleStopLossMarketOrder();
     }
