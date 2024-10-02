@@ -1,18 +1,13 @@
 export const subscribeToOrderAndWallet = (ws) => {
-    const orderPayload = {
-        op: 'subscribe',
-        args: ['order', 'wallet']
-    };
-
-    ws.send(JSON.stringify(orderPayload));
+    ws.send(
+        JSON.stringify({
+            op: 'subscribe',
+            args: ['order', 'wallet']
+        })
+    );
 };
 
 export const subscribeCandleAndOrderBook = (ws, symbol) => {
-    if (!ws) {
-        console.error('WebSocket is not defined');
-        return;
-    }
-
     ws.send(
         JSON.stringify({
             op: 'subscribe',
