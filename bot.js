@@ -91,22 +91,20 @@ const handleOrderUpdate = (orders) => {
                 orderTracking.orderStatus = orderStatus;
                 break;
             case 'Cancelled':
-                if (side === 'Sell') {
+                if (side === 'Sell')
                     placeMarketOrder({
                         ws: wsConnections.trade,
                         symbol: tradeSettings.symbol,
                         qty,
                         side: 'Sell'
                     });
-                    resetOrderTracking();
-                }
                 break;
             case 'Filled':
                 if (side === 'Buy') orderTracking.limitOrderId = null;
                 if (side === 'Sell') {
                     const profitOrLoss = calculateProfit(orderTracking.buyOrderPrice, price, qty);
-                    resetOrderTracking();
                     console.log(`SL Hit ${profitOrLoss >= 0 ? 'Profit' : 'Loss'} $${profitOrLoss}`);
+                    resetOrderTracking();
                 }
                 break;
         }
@@ -178,7 +176,7 @@ const updateStopLoss = async () => {
 // Place Buy Limit Order
 const placeBuyLimitOrder = async (highestOrder) => {
     const { symbol, triggerPriceUp, coinDecimal, initialStopLoss, qtyDecimal } = tradeSettings;
-    const orderPrice = highestOrder.toFixed(coinDecimal);
+    const orderPrice = (highestOrder + triggerPriceUp).toFixed(coinDecimal);
     const slPrice = calculateStopLoss(highestOrder, initialStopLoss, coinDecimal);
     const triggerPrice = (parseFloat(slPrice) + triggerPriceUp).toFixed(coinDecimal);
 
@@ -213,14 +211,14 @@ const handleStopLossMarketOrder = async () => {
         (order) => order[1] === parseFloat(sellOrder.price) && order[2] === 'Sell'
     );
 
-    if (findOrder === -1 || findOrder <= 15) {
-        orderTracking.sellOrder.isCancel = true;
+    if (findOrder === -1 || findOrder <= 20) {
         await cancelledOrder({
             ws: wsConnections.trade,
             symbol: tradeSettings.symbol,
             orderId: sellOrder.id
         });
         console.log(`Cancelled Sell Order: ${sellOrder.id}`);
+        resetOrderTracking();
     }
 };
 
@@ -231,21 +229,19 @@ const handleOrderBooksChanging = async () => {
     const orderBookSignal = performStrategyAnalysis(orderBooks);
     const lastOrderPrice = orderBookSignal?.highestOrder;
 
-    // Update Stop Loss if necessary
     await updateStopLoss();
 
-    // Check if the order
-    // if (
-    //     isGreenCandle['1min'] &&
-    //     isGreenCandle['15min'] &&
-    //     orderBookSignal?.signal === 'Buy' &&
-    //     !orderTracking.orderStatus &&
-    //     !orderTracking.limitOrderId &&
-    //     !orderTracking.isOrderPlaced
-    // ) {
-    //     orderTracking.isOrderPlaced = true;
-    //     await placeBuyLimitOrder(lastOrderPrice);
-    // }
+    if (
+        isGreenCandle['1min'] &&
+        isGreenCandle['15min'] &&
+        orderBookSignal?.signal === 'Buy' &&
+        !orderTracking.orderStatus &&
+        !orderTracking.limitOrderId &&
+        !orderTracking.isOrderPlaced
+    ) {
+        orderTracking.isOrderPlaced = true;
+        await placeBuyLimitOrder(lastOrderPrice);
+    }
 
     // Cancel Buy Order if necessary
     if (orderTracking.orderStatus === 'New' && orderTracking.limitOrderId) {
@@ -253,7 +249,7 @@ const handleOrderBooksChanging = async () => {
             (order) => order[1] === parseFloat(orderTracking.buyOrderPrice) && order[2] === 'Buy'
         );
 
-        if (findOrder === -1 || (findOrder >= 35 && !orderTracking.isCancelOrder)) {
+        if (findOrder === -1 || (findOrder >= 30 && !orderTracking.isCancelOrder)) {
             orderTracking.isCancelOrder = true;
             await cancelledOrder({
                 ws: wsConnections.trade,
@@ -271,6 +267,7 @@ const handleOrderBooksChanging = async () => {
         orderTracking.orderStatus === 'New' &&
         !orderTracking.sellOrder.isCancel
     ) {
+        orderTracking.sellOrder.isCancel = true;
         await handleStopLossMarketOrder();
     }
 };

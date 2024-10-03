@@ -11,7 +11,6 @@ export function isGreenCandle(lastCandle) {
 export function performStrategyAnalysis(orderBook) {
     let totalBidQty = 0,
         totalAskQty = 0,
-        stopLossOrderPrice,
         highestBid = -Infinity,
         lowestAsk = Infinity;
 
@@ -29,7 +28,6 @@ export function performStrategyAnalysis(orderBook) {
         // Aggregate quantities and find highest bid and lowest ask in one pass
         if (side === 'Buy') {
             totalBidQty += size;
-            if (i === 3) stopLossOrderPrice = price;
             if (price > highestBid) highestBid = price;
         } else if (side === 'Sell') {
             totalAskQty += size;
