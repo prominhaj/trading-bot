@@ -6,19 +6,13 @@ import {
 } from "@/components/ui/tooltip"
 import { Home, LineChart, Package, Settings, ShoppingCart, Users2 } from "lucide-react";
 import Link from "next/link";
-import logo from "@/assets/logo.png"
-import Image from "next/image";
+import Logo from "@/components/globals/Logo/Logo";
 
 const SideBar = () => {
     return (
         <aside className="fixed inset-y-0 left-0 z-10 flex-col hidden border-r w-14 bg-background sm:flex">
             <nav className="flex flex-col items-center gap-4 px-2 sm:py-4">
-                <Link
-                    href="/"
-                    className="flex items-center justify-center gap-1 text-lg font-semibold rounded-full group h-9 w-9 shrink-0 bg-primary text-primary-foreground md:h-8 md:w-8 md:text-base"
-                >
-                    <Image className="w-full h-full rounded-full" src={logo} width={24} height={24} alt="Logo" />
-                </Link>
+                <Logo />
                 <TooltipProvider>
                     <Tooltip>
                         <TooltipTrigger asChild>
