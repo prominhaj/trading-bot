@@ -7,7 +7,6 @@ import {
     updateTPSLOrder
 } from './operation/wsOperation.js';
 import { subscribeCandleAndOrderBook, subscribeToOrderAndWallet } from './subscribe/subscribe.js';
-import { isGreenCandle, performStrategyAnalysis } from './strategy/strategy.js';
 import { calculateProfit, calculateStopLoss } from './utils.js';
 import { getWalletBalance } from './operation/bybit-api.js';
 import { handleOrderbookUpdate, OrderBooks } from './operation/orderbook.js';
@@ -22,16 +21,18 @@ const wsURLs = {
 // Trade Settings
 export const tradeSettings = {
     coin: 'ETH',
+    stableCoin: 'USDC',
     symbol: 'ETHUSDC',
-    initialStopLoss: 0.02,
-    stopLossPercentage: 0.003,
+    limitOrderPrice: 2435,
+    initialStopLoss: 0.1, // %
+    stopLossPercentage: 0.1, // %
     triggerPriceUp: 0.05,
     coinDecimal: 2,
     qtyDecimal: 5,
     orderUp: 0.2
 };
 
-// Order Tracking Variables
+// Order Tracking Variables No Changing
 export let orderTracking = {
     limitOrderId: null,
     equityBalance: null,
@@ -113,18 +114,13 @@ const handleOrderUpdate = (orders) => {
 
 // Handle Wallet updates
 const handleWalletUpdate = (walletData) => {
-    const usdcBalance = walletData?.[0]?.coin?.find(({ coin }) => coin === 'USDC');
+    const usdcBalance = walletData?.[0]?.coin?.find(
+        ({ coin }) => coin === tradeSettings?.stableCoin
+    );
     const availableBalance = parseFloat(usdcBalance?.availableToWithdraw);
     if (availableBalance > 10) {
         orderTracking.equityBalance = availableBalance - 0.2;
     }
-};
-
-// Handle Candle Data
-const handleCandleData = (candle) => {
-    const interval = candle?.interval;
-    if (interval === '1') orderTracking.isGreenCandle['1min'] = isGreenCandle(candle);
-    if (interval === '15') orderTracking.isGreenCandle['15min'] = isGreenCandle(candle);
 };
 
 // Reset tracking variables after an order is completed or cancelled
@@ -174,16 +170,16 @@ const updateStopLoss = async () => {
 };
 
 // Place Buy Limit Order
-const placeBuyLimitOrder = async (highestOrder) => {
+const placeBuyLimitOrder = async (limitOrderPrice) => {
     const { symbol, triggerPriceUp, coinDecimal, initialStopLoss, qtyDecimal } = tradeSettings;
-    const orderPrice = (highestOrder + triggerPriceUp).toFixed(coinDecimal);
-    const slPrice = calculateStopLoss(highestOrder, initialStopLoss, coinDecimal);
+    const orderPrice = (limitOrderPrice + triggerPriceUp).toFixed(coinDecimal);
+    const slPrice = calculateStopLoss(limitOrderPrice, initialStopLoss, coinDecimal);
     const triggerPrice = (parseFloat(slPrice) + triggerPriceUp).toFixed(coinDecimal);
 
     const walletBalance =
         orderTracking.equityBalance ||
-        (await getWalletBalance('USDC'))?.[0]?.availableToWithdraw - 0.2;
-    const qty = (parseFloat(walletBalance) / parseFloat(highestOrder + triggerPriceUp)).toFixed(
+        (await getWalletBalance(tradeSettings?.stableCoin))?.[0]?.availableToWithdraw - 0.2;
+    const qty = (parseFloat(walletBalance) / parseFloat(limitOrderPrice + triggerPriceUp)).toFixed(
         qtyDecimal
     );
 
@@ -225,22 +221,11 @@ const handleStopLossMarketOrder = async () => {
 // Handle Orderbook changes
 const handleOrderBooksChanging = async () => {
     orderBooks = OrderBooks?.books?.['50']?.book;
-    const { isGreenCandle, lastPrice } = orderTracking;
-    const orderBookSignal = performStrategyAnalysis(orderBooks);
-    const lastOrderPrice = orderBookSignal?.highestOrder;
-
     await updateStopLoss();
 
-    if (
-        isGreenCandle['1min'] &&
-        isGreenCandle['15min'] &&
-        orderBookSignal?.signal === 'Buy' &&
-        !orderTracking.orderStatus &&
-        !orderTracking.limitOrderId &&
-        !orderTracking.isOrderPlaced
-    ) {
+    if (!orderTracking.orderStatus && !orderTracking.limitOrderId && !orderTracking.isOrderPlaced) {
         orderTracking.isOrderPlaced = true;
-        await placeBuyLimitOrder(lastOrderPrice);
+        await placeBuyLimitOrder(tradeSettings?.limitOrderPrice);
     }
 
     // Cancel Buy Order if necessary
@@ -288,7 +273,6 @@ const initializeWebSocket = (wsUrl, wsType) => {
         if (response.op === 'auth') subscribeToOrderAndWallet(ws);
         if (response?.topic === 'order') handleOrderUpdate(response.data);
         if (response?.topic === 'wallet') handleWalletUpdate(response.data);
-        if (response?.topic?.startsWith('kline')) handleCandleData(response.data[0]);
         if (response?.topic?.startsWith('tickers')) handleChangeTickers(response.data.lastPrice);
         if (response?.topic?.startsWith('orderbook')) {
             handleOrderbookUpdate(response);
